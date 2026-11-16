@@ -43,5 +43,6 @@ airflow/*.cfg
 .DS_Store
 Thumbs.db
 
-# Claude Code (configuração local)
-.claude/
+# Claude Code: ignora config local, mas versiona as specs (SDD)
+.claude/*
+!.claude/sdd/
