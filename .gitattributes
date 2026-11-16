@@ -1,0 +1,7 @@
+# Normaliza finais de linha para LF (essencial com Windows + WSL + Docker)
+* text=auto eol=lf
+*.sh text eol=lf
+*.bat text eol=crlf
+*.parquet binary
+*.png binary
+*.jpg binary

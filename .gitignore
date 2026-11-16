@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Segredos / variáveis de ambiente
+.env
+.env.*
+!.env.example
+
+# Dados locais (nunca versionar dados)
+data/
+*.parquet
+*.duckdb
+*.duckdb.wal
+*.csv
+!**/seeds/*.csv
+!tests/fixtures/**/*.csv
+
+# Spark / Delta
+spark-warehouse/
+metastore_db/
+derby.log
+_delta_log/
+
+# dbt
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+
+# Airflow
+airflow/logs/
+airflow/*.pid
+airflow/*.cfg
+
+# IDE / SO
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Claude Code (configuração local)
+.claude/
