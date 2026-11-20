@@ -10,7 +10,7 @@
 | **Feature** | FATIA1_VENDAS_RECEITA |
 | **Data** | 2026-11-20 |
 | **Autor** | define-agent (Claude) + Cézar |
-| **Status** | Ready for Design |
+| **Status** | ✅ Complete (Designed) |
 | **Clarity Score** | 13/15 |
 | **Origem** | [BRAINSTORM_TRANSPORTE_RODOVIARIO.md](BRAINSTORM_TRANSPORTE_RODOVIARIO.md) (fatia 1 do plano) |
 
@@ -221,4 +221,4 @@ Nenhuma bloqueia o /design. Para o revisor (janela 2) confirmar:
 
 ## Next Step
 
-**Pronto para:** `/design .claude/sdd/features/DEFINE_FATIA1_VENDAS_RECEITA.md`
+**Design:** [DESIGN_FATIA1_VENDAS_RECEITA.md](DESIGN_FATIA1_VENDAS_RECEITA.md) → próximo: `/build`
