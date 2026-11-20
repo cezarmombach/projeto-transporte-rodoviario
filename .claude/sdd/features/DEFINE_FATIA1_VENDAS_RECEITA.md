@@ -11,7 +11,8 @@
 | **Data** | 2026-11-20 |
 | **Autor** | define-agent (Claude) + Cézar |
 | **Status** | ✅ Complete (Designed) |
-| **Clarity Score** | 13/15 |
+| **Clarity Score** | 14/15 |
+| **Revisão** | [REVIEW_FATIA1_JANELA2.md](REVIEW_FATIA1_JANELA2.md) (janela 2, aplicada na v1.1) |
 | **Origem** | [BRAINSTORM_TRANSPORTE_RODOVIARIO.md](BRAINSTORM_TRANSPORTE_RODOVIARIO.md) (fatia 1 do plano) |
 
 > Títulos de seção ficam em inglês porque o `spec-lint` do AgentSpec valida por nome de seção;
@@ -42,21 +43,19 @@ empresas, em cada período".
 | Prioridade | Objetivo |
 |------------|----------|
 | **MUST** | Simulador gera o histórico (~2 anos) e as vendas de cada dia no Postgres, de forma determinística (seed) |
-| **MUST** | Vendas podem ser **canceladas** depois da compra (UPDATE no OLTP), para que a extração incremental e o MERGE tenham alterações reais para tratar |
+| **MUST** | Vendas podem ser **canceladas** depois da compra (UPDATE no OLTP), para que a extração incremental e o MERGE tenham alterações reais para tratar; o cancelamento é **agendado no nascimento da venda** (determinístico, independe da ordem de execução) |
 | **MUST** | Extração incremental do Postgres para o bronze (MinIO, Parquet) com dlt, por watermark de `updated_at` |
 | **MUST** | Bronze → silver com PySpark + Delta Lake: tipagem, deduplicação e MERGE por chave da passagem (última versão vence) |
 | **MUST** | Gold com dbt + DuckDB lendo a silver Delta direto no MinIO: `fato_vendas`, `dim_rota`, `dim_empresa`, `dim_cidade`, `dim_tempo` |
-| **MUST** | Uma DAG diária no Airflow encadeia simulação → extração → silver → dbt build, com retries |
+| **MUST** | Uma DAG diária no Airflow encadeia simulação → extração → silver → dbt build → reconciliação → publicação, com retries |
 | **MUST** | Reexecutar qualquer data não duplica nem perde dados (idempotência em todas as camadas) |
 | **MUST** | Testes do dbt (not_null, unique, relationships, accepted_values) e testes unitários (pytest) passando |
 | **MUST** | CI no GitHub Actions: ruff, sqlfluff, pytest (unitários) e `dbt build` em amostra pequena |
 | **MUST** | Dashboard de receita no Metabase: receita e passagens por mês, por rota e por empresa |
-| **SHOULD** | Backfill de um intervalo de datas pelo próprio Airflow (catchup/backfill da DAG) |
-| **SHOULD** | Teste de reconciliação OLTP × gold (contagem e receita por data) automatizado |
+| **MUST** | Reconciliação OLTP × gold de **todas** as datas (contagem e receita líquida) como portão **antes** da publicação |
+| **SHOULD** | Backfill de intervalos curtos pela DAG diária; a carga inicial (730 dias) usa a DAG de carga histórica |
 | **SHOULD** | dbt docs gerado com lineage de source (silver) até `fato_vendas` |
 | **SHOULD** | ADRs registrados para as decisões estruturais (ver Constraints) |
-| **COULD** | Build das imagens Docker customizadas no CI |
-| **COULD** | dbt-expectations para regras de negócio (ex.: valor dentro de faixa por distância) |
 
 ---
 
@@ -64,9 +63,10 @@ empresas, em cada período".
 
 - [ ] Carga histórica gera entre **1M e 5M** passagens cobrindo **730 dias** (2 anos), com seed fixa produzindo os mesmos totais a cada execução.
 - [ ] A DAG diária completa uma data em **≤ 15 min** na máquina local (WSL2).
-- [ ] O backfill dos 730 dias completa em **≤ 3 h**.
-- [ ] Pico de memória do WSL2 **≤ 10 GB** durante a DAG (limite do `.wslconfig`).
-- [ ] Imagens Docker + dados da fatia 1 ocupam **≤ 15 GB** de disco.
+- [ ] A carga histórica de 730 dias (DAG `transporte_carga_historica`) completa em **≤ 3 h**.
+- [ ] O backfill curto (até 7 dias) pela DAG diária leva **≤ 15 min por data**.
+- [ ] Pico de memória do WSL2 **≤ 10 GB** durante a DAG (limite do `.wslconfig`), medido com `docker stats` amostrado durante a carga histórica.
+- [ ] Imagens Docker + dados da fatia 1 ocupam **≤ 15 GB** de disco, medido com `docker system df` + `du -sh data/`.
 - [ ] Reconciliação: para **100%** das datas, contagem de passagens e receita líquida no OLTP == em `fato_vendas` (diferença 0, centavos inclusos).
 - [ ] Reexecutar a mesma data **3 vezes seguidas** deixa contagem e receita idênticas em bronze (por partição), silver e gold.
 - [ ] **0** chaves primárias nulas ou duplicadas em silver e em todos os modelos gold.
@@ -85,7 +85,7 @@ empresas, em cada período".
 | AT-004 | Duplicata na extração | O bronze recebeu a mesma versão de uma passagem duas vezes (janela sobreposta) | A silver é processada | Silver tem 1 linha por `passagem_id` |
 | AT-005 | Falha transitória | MinIO indisponível durante a extração | A task falha | Airflow faz retry; quando o serviço volta, a execução termina sem duplicatas |
 | AT-006 | Qualidade bloqueia | Uma venda com `rota_id` inexistente chega à silver | `dbt build` roda | O teste `relationships` falha e a DAG fica marcada como falha |
-| AT-007 | Reconciliação | Uma data qualquer processada | O teste de reconciliação roda | Contagem e receita líquida OLTP == gold |
+| AT-007 | Reconciliação | Datas processadas até D | A task de reconciliação roda (antes de publicar) | Para todas as datas, contagem e receita líquida OLTP == gold; se divergir, nada é publicado |
 | AT-008 | CI | Um PR altera um modelo dbt | O CI roda | ruff, sqlfluff, pytest e `dbt build` (amostra) executam; qualquer falha bloqueia o merge |
 | AT-009 | Dia sem vendas | O simulador gera 0 vendas para D | A DAG roda | Execução termina com sucesso, sem erro e sem linhas novas |
 
@@ -100,6 +100,8 @@ empresas, em cada período".
 - FastAPI (removido do projeto na v1).
 - Métricas de ocupação e de comportamento de compra.
 - Streaming / micro-lotes; cloud; Kubernetes; hardening de segurança dos serviços (credenciais locais via `.env`).
+- Monitoramento contínuo de recursos, cofre de segredos e backup do MinIO (registrados como "Limitações conhecidas" no README).
+- Build das imagens Docker no CI e dbt-expectations (eram COULD; removidos na revisão da janela 2).
 
 ---
 
@@ -111,6 +113,7 @@ empresas, em cada período".
 | Técnica | Stack 100% gratuita e local (sem Snowflake/Databricks) | DuckDB como warehouse; PySpark local |
 | Técnica | Delta gravado sem features avançadas (ex.: deletion vectors) | Garante leitura pela extensão `delta` do DuckDB (vira ADR) |
 | Técnica | Airflow só orquestra; lógica fica em `src/transporte`, `spark/jobs`, `dbt` | Lógica testável sem Airflow |
+| Técnica | Todos os instantes em **UTC**; valores monetários sempre **decimal** em todas as camadas | Evita vendas noturnas mudando de dia e arredondamento na reconciliação (vira ADR) |
 | Técnica | Python 3.12, uv, ruff, pre-commit já configurados | Dependências novas entram via `uv add` |
 | Processo | Ciclo de 3 janelas: specs → revisão → build | DESIGN sai desta janela; revisão em contexto novo |
 | Recurso | Nenhum dado versionado no Git; e-mail do Git = noreply | Amostra do CI é gerada pelo simulador, não commitada |
@@ -150,14 +153,19 @@ empresas, em cada período".
 | `created_at` | TIMESTAMP | NOT NULL | Não |
 | `updated_at` | TIMESTAMP | NOT NULL; watermark da extração | Não |
 
+Todos os `TIMESTAMP` são instantes em **UTC** (sem fuso no tipo, UTC por convenção em todas as
+ferramentas); a data lógica D do Airflow também é UTC.
+
 **Receita líquida** = soma de `valor` com `status = 'vendida'`. Receita é atribuída à
-**data da compra** (`data_compra`).
+**data da compra** (`data_compra`). Como cancelamentos tardios alteram a receita de datas
+passadas, o dashboard mostra a **posição atual**, não um fechamento congelado; o fato mantém
+`data_viagem_sk` para uma visão por data da viagem, se necessária.
 
 ### Freshness SLAs
 
 | Camada | Alvo | Medição |
 |--------|------|---------|
-| Bronze | Partição de D escrita na execução de D | Existência da partição `ingest_date=D` |
+| Bronze | Carga de D registrada na execução de D | Load do dlt registrado para D, inclusive com 0 linhas (dia sem vendas não cria partição) |
 | Silver | Atualizada na mesma execução | Versão nova da tabela Delta |
 | Gold / dashboard | Atualizado ao fim da DAG de D (≤ 15 min) | Status da DAG + max(`data_compra`) em `fato_vendas` |
 
@@ -180,11 +188,12 @@ empresas, em cada período".
 |----|----------|-------------------|-----------|
 | A-001 | A extensão `delta` do DuckDB lê tabelas Delta no MinIO (S3 path-style) gravadas pelo Spark | Volta à abordagem B do brainstorm (Spark exporta Parquet) | [ ] — spike no início do build |
 | A-002 | O Metabase conecta ao DuckDB via driver da comunidade (`metabase_duckdb_driver`) | Gold é publicado em Postgres para o Metabase, ou outro BI | [ ] |
-| A-003 | DuckDB permite o Metabase ler enquanto o dbt não escreve (1 escritor, leitores read-only) | Metabase lê um arquivo publicado/copiado ao fim da DAG | [ ] — definir no /design |
+| A-003 | DuckDB permite o Metabase ler enquanto o dbt não escreve (1 escritor, leitores read-only) | Metabase lê um arquivo publicado/copiado ao fim da DAG | [x] resolvida pela Decision 3 do DESIGN (cópia atômica; serving só com marts); spike confirma a reabertura |
 | A-004 | dlt faz extração incremental por `updated_at` e grava Parquet no MinIO (destino filesystem/S3) | Extração com SQL + PyArrow manual | [ ] |
 | A-005 | Spark + delta-spark rodam em container com 3–4 GB sem OOM para o volume diário e o backfill | Ajustar partições/memória ou reduzir volume para ~1M | [ ] |
 | A-006 | Todos os serviços da fatia 1 cabem em ≤ 10 GB de RAM usando profiles | Subir serviços em etapas (ingestão+Spark, depois dbt+Metabase) | [ ] |
 | A-007 | Cancelamentos ocorrem até a data da viagem; não há outras alterações de venda | Ampliar o modelo de status e o MERGE | [x] decisão de escopo |
+| A-008 | Existe imagem do MinIO (community) fixável por tag + digest | Usar SeaweedFS ou Garage (S3-compatível); muda só o compose e o endpoint | [ ] — spike |
 
 ---
 
@@ -196,18 +205,23 @@ empresas, em cada período".
 | Users | 2 | Personas definidas, mas são hipotéticas (projeto de portfólio) |
 | Goals | 3 | MoSCoW explícito |
 | Success | 3 | Critérios numéricos e testáveis |
-| Scope | 2 | Fronteiras claras; regras de cancelamento e atribuição de receita são premissas a revisar |
-| **Total** | **13/15** | Acima do gate de 12 |
+| Scope | 3 | Fronteiras claras; cancelamento e atribuição de receita confirmados na revisão da janela 2 |
+| **Total** | **14/15** | Acima do gate de 12 |
 
 ---
 
 ## Open Questions
 
-Nenhuma bloqueia o /design. Para o revisor (janela 2) confirmar:
+Todas respondidas na revisão da janela 2 ([REVIEW_FATIA1_JANELA2.md](REVIEW_FATIA1_JANELA2.md)):
 
-1. Receita atribuída à **data da compra** (e não à data da viagem) está ok?
-2. Faixas de desempenho (≤ 15 min/dia, ≤ 3 h de backfill) são realistas para a máquina?
-3. Incluir CPF fictício (PII) para praticar mascaramento, ou remover o campo?
+1. ~~Receita atribuída à data da compra está ok?~~ **Sim.** Visão comercial padrão (bookings). O fato
+   mantém `data_viagem_sk`; documentado que a receita de períodos passados muda com cancelamentos
+   tardios (ver Data Contract).
+2. ~~Faixas de desempenho são realistas?~~ **Sim**, com folga (estimativa de 2–4 min por dia). A
+   condição da carga histórica ≤ 3 h é a inserção em massa via `COPY` no simulador; o critério de
+   backfill foi separado em carga histórica e backfill curto (ver Success Criteria).
+3. ~~Incluir CPF fictício?~~ **Mantido**: em claro só no bronze, hash com salt secreto na silver,
+   ausente no gold.
 
 ---
 
@@ -216,6 +230,7 @@ Nenhuma bloqueia o /design. Para o revisor (janela 2) confirmar:
 | Versão | Data | Autor | Mudanças |
 |--------|------|-------|----------|
 | 1.0 | 2026-11-20 | define-agent | Versão inicial a partir do BRAINSTORM (fatia 1) |
+| 1.1 | 2026-11-20 | iterate-agent | Revisão janela 2 ([REVIEW_FATIA1_JANELA2.md](REVIEW_FATIA1_JANELA2.md)): cancelamento agendado (R1); critérios de carga histórica × backfill curto (R2); reconciliação de todas as datas como MUST antes da publicação (R4); UTC e decimal (R5); SLA do bronze para dia sem vendas (M11); COULDs removidos (M16); método de medição (B25); A-003 resolvida, A-008 adicionada; Open Questions respondidas. Cascata aplicada no DESIGN v1.1 |
 
 ---
 

@@ -12,7 +12,7 @@
 | **Data** | 2026-11-20 |
 | **Autor** | revisor (Claude, janela 2) + Cézar |
 | **Documentos revisados** | [BRAINSTORM_TRANSPORTE_RODOVIARIO.md](BRAINSTORM_TRANSPORTE_RODOVIARIO.md), [DEFINE_FATIA1_VENDAS_RECEITA.md](DEFINE_FATIA1_VENDAS_RECEITA.md), [DESIGN_FATIA1_VENDAS_RECEITA.md](DESIGN_FATIA1_VENDAS_RECEITA.md) |
-| **Status** | Aprovado — aguardando `/iterate` |
+| **Status** | ✅ Aplicado — DEFINE v1.1 e DESIGN v1.1 (2026-11-20) |
 
 ## Instruções para o /iterate
 
