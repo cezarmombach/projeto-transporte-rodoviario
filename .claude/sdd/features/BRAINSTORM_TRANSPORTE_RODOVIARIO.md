@@ -9,7 +9,7 @@
 | **Feature** | TRANSPORTE_RODOVIARIO |
 | **Data** | 2026-11-17 (iniciado em 2026-11-16) |
 | **Autor** | brainstorm-agent (Claude) + Cézar |
-| **Status** | Ready for Define |
+| **Status** | ✅ Complete (Defined) — fatia 1 em DEFINE_FATIA1_VENDAS_RECEITA.md |
 
 ---
 
